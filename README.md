@@ -6,7 +6,7 @@
 %load_ext nvcc4jupyter
 ```
 ```
-then common.h la irukka code
+then common.h 
 then execute the question or given program
 ```
 ## Write a GPU based vector summation program using CUDA C. Find the execution configuration
