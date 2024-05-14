@@ -248,6 +248,59 @@ CHECK(cudaFree(d_MatC));
 ```
 ## Write a CUDA C program to perform matrix addition with Unified memory.
 ```
+// grid 2D block 2D
+__global__ void sumMatrixGPU(float *MatA, float *MatB, float *MatC, int nx,
+                             int ny)
+{
+    unsigned int ix = threadIdx.x + blockIdx.x * blockDim.x;
+    unsigned int iy = threadIdx.y + blockIdx.y * blockDim.y;
+    unsigned int idx = iy * nx + ix;
+
+    if (ix < nx && iy < ny)
+    {
+        MatC[idx] = MatA[idx] + MatB[idx];
+    }
+}
+
+// set up data size of matrix
+int nx, ny;
+int ishift = 12;
+
+if  (argc > 1) ishift = atoi(argv[1]);
+
+nx = ny = 1 << ishift;
+
+int nxy = nx * ny;
+int nBytes = nxy * sizeof(float);
+
+// invoke kernel at host side
+int dimx = 32;
+int dimy = 32;
+dim3 block(dimx, dimy);
+dim3 grid((nx + block.x - 1) / block.x, (ny + block.y - 1) / block.y);
+
+// warm-up kernel, with unified memory all pages will migrate from host to device
+sumMatrixGPU<<<grid, block>>>(A, B, gpuRef, 1, 1);
+
+// Kernel Call
+sumMatrixGPU<<<grid, block>>>(A, B, gpuRef, nx, ny);
+
+// check kernel error
+CHECK(cudaGetLastError());
+
+// check device results
+checkResult(hostRef, gpuRef, nxy);
+
+// free device global memory
+CHECK(cudaFree(A));    
+CHECK(cudaFree(B));
+CHECK(cudaFree(hostRef));
+CHECK(cudaFree(gpuRef));
+
+// reset device
+CHECK(cudaDeviceReset());
+return (0);
+
 
 ```
 ## Write a CUDA C program to perform matrix addition with Unified memory.
