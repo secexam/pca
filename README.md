@@ -11,160 +11,257 @@ then execute the question or given program
 ```
 ## Write a GPU based vector summation program using CUDA C. Find the execution configuration
 ```
-// Type your device code here
-__global__ void sumArraysOnGPU(float *A, float *B, float *C, const int N){
-    int i = blockIdx.x*blockDim.x+threadIdx.x;
-    if (i<N) C[i] = A[i] + B[i];
+sumArraysOnGPU
+Kernel Function
+__global__ void sumArraysOnGPU(float *A, float *B, float *C, const int N) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < N) {
+        C[i] = A[i] + B[i];
+    }
 }
-
-// set up device
-int dev = 0;
-cudaDeviceProp deviceProp;
-CHECK(cudaGetDeviceProperties(&deviceProp, dev));
-printf("Using Device %d: %s\n", dev, deviceProp.name);
-CHECK(cudaSetDevice(dev));
-
-// malloc device global memory
-float *d_A, *d_B, *d_C;
-CHECK(cudaMalloc((float**)&d_A, nBytes));
-CHECK(cudaMalloc((float**)&d_B, nBytes));
-CHECK(cudaMalloc((float**)&d_C, nBytes));
-
-// transfer data from host to device
-CHECK(cudaMemcpy(d_A, h_A, nBytes, cudaMemcpyHostToDevice));
-CHECK(cudaMemcpy(d_B, h_B, nBytes, cudaMemcpyHostToDevice));
-CHECK(cudaMemcpy(d_C, gpuRef, nBytes, cudaMemcpyHostToDevice));
-
-// invoke kernel at host side
-int iLen = 512;
-dim3 block (iLen);
-dim3 grid  ((nElem + block.x - 1) / block.x);
-
-iStart = seconds();
+Kernel Call
 sumArraysOnGPU<<<grid, block>>>(d_A, d_B, d_C, nElem);
-CHECK(cudaDeviceSynchronize());
-iElaps = seconds() - iStart;
-printf("sumArraysOnGPU <<<  %d, %d  >>>  Time elapsed %f sec\n", grid.x,
-        block.x, iElaps);
 
-// check kernel error
-CHECK(cudaGetLastError()) ;
-
-// copy kernel result back to host side
-CHECK(cudaMemcpy(gpuRef, d_C, nBytes, cudaMemcpyDeviceToHost));
-
-// check device results
-checkResult(hostRef, gpuRef, nElem);
-
-// free device global memory
-CHECK(cudaFree(d_A));
-CHECK(cudaFree(d_B));
-CHECK(cudaFree(d_C));
 
 ```
 ## Demonstrate the Matrix transposition on shared memory with grid (1,1) block (16,16).
 ```
-CHECK(cudaMemset(d_C, 0, nBytes));
+Matrix Transposition
+Kernel Function
+__global__ void setRowReadRow(int *out)
+{
+    // static shared memory
+    __shared__ int tile[BDIMY][BDIMX];
+
+    // mapping from thread index to global memory index
+    unsigned int idx = threadIdx.y * blockDim.x + threadIdx.x;
+
+    // shared memory store operation
+    tile[threadIdx.y][threadIdx.x] = idx;
+
+    // wait for all threads to complete
+    __syncthreads();
+
+    // shared memory load operation
+    out[idx] = tile[threadIdx.y][threadIdx.x] ;
+}
+
+__global__ void setColReadCol(int *out)
+{
+    // static shared memory
+    __shared__ int tile[BDIMX][BDIMY];
+
+    // mapping from thread index to global memory index
+    unsigned int idx = threadIdx.y * blockDim.x + threadIdx.x;
+
+    // shared memory store operation
+    tile[threadIdx.x][threadIdx.y] = idx;
+
+    // wait for all threads to complete
+    __syncthreads();
+
+    // shared memory load operation
+    out[idx] = tile[threadIdx.x][threadIdx.y];
+}
+
+__global__ void setColReadCol2(int *out)
+{
+    // static shared memory
+    __shared__ int tile[BDIMY][BDIMX];
+
+    // mapping from 2D thread index to linear memory
+    unsigned int idx = threadIdx.y * blockDim.x + threadIdx.x;
+
+    // convert idx to transposed coordinate (row, col)
+    unsigned int irow = idx / blockDim.y;
+    unsigned int icol = idx % blockDim.y;
+
+    // shared memory store operation
+    tile[icol][irow] = idx;
+
+    // wait for all threads to complete
+    __syncthreads();
+
+    // shared memory load operation
+    out[idx] = tile[icol][irow] ;
+}
+
+__global__ void setRowReadCol(int *out)
+{
+    // static shared memory
+    __shared__ int tile[BDIMY][BDIMX];
+// mapping from 2D thread index to linear memory
+    unsigned int idx = threadIdx.y * blockDim.x + threadIdx.x;
+
+    // convert idx to transposed coordinate (row, col)
+    unsigned int irow = idx / blockDim.y;
+    unsigned int icol = idx % blockDim.y;
+
+    // shared memory store operation
+    tile[threadIdx.y][threadIdx.x] = idx;
+
+    // wait for all threads to complete
+    __syncthreads();
+
+    // shared memory load operation
+    out[idx] = tile[icol][irow];
+}
+
+__global__ void setRowReadColPad(int *out)
+{
+    // static shared memory
+    __shared__ int tile[BDIMY][BDIMX + IPAD];
+
+    // mapping from 2D thread index to linear memory
+    unsigned int idx = threadIdx.y * blockDim.x + threadIdx.x;
+
+    // convert idx to transposed (row, col)
+    unsigned int irow = idx / blockDim.y;
+    unsigned int icol = idx % blockDim.y;
+
+    // shared memory store operation
+    tile[threadIdx.y][threadIdx.x] = idx;
+
+    // wait for all threads to complete
+    __syncthreads();
+
+    // shared memory load operation
+    out[idx] = tile[icol][irow] ;
+}
+
+__global__ void setRowReadColDyn(int *out)
+{
+    // dynamic shared memory
+    extern  __shared__ int tile[];
+    // mapping from thread index to global memory index
+    unsigned int idx = threadIdx.y * blockDim.x + threadIdx.x;
+
+    // convert idx to transposed (row, col)
+    unsigned int irow = idx / blockDim.y;
+    unsigned int icol = idx % blockDim.y;
+
+    // convert back to smem idx to access the transposed element
+    unsigned int col_idx = icol * blockDim.x + irow;
+
+    // shared memory store operation
+    tile[idx] = idx;
+
+    // wait for all threads to complete
+    __syncthreads();
+
+    // shared memory load operation
+    out[idx] = tile[col_idx];
+}
+
+__global__ void setRowReadColDynPad(int *out)
+{
+    // dynamic shared memory
+    extern  __shared__ int tile[];
+
+    // mapping from thread index to global memory index
+    unsigned int g_idx = threadIdx.y * blockDim.x + threadIdx.x;
+
+    // convert idx to transposed (row, col)
+    unsigned int irow = g_idx / blockDim.y;
+    unsigned int icol = g_idx % blockDim.y;
+
+    unsigned int row_idx = threadIdx.y * (blockDim.x + IPAD) + threadIdx.x;
+
+    // convert back to smem idx to access the transposed element
+    unsigned int col_idx = icol * (blockDim.x + IPAD) + irow;
+
+    // shared memory store operation
+    tile[row_idx] = g_idx;
+
+    // wait for all threads to complete
+    __syncthreads();
+
+    // shared memory load operation
+    out[g_idx] = tile[col_idx];
+}
+Kernel Call
 setRowReadRow<<<grid, block>>>(d_C);
-CHECK(cudaMemcpy(gpuRef, d_C, nBytes, cudaMemcpyDeviceToHost));
 
-CHECK(cudaMemset(d_C, 0, nBytes));
 setColReadCol<<<grid, block>>>(d_C);
-CHECK(cudaMemcpy(gpuRef, d_C, nBytes, cudaMemcpyDeviceToHost));
 
-CHECK(cudaMemset(d_C, 0, nBytes));
 setColReadCol2<<<grid, block>>>(d_C);
-CHECK(cudaMemcpy(gpuRef, d_C, nBytes, cudaMemcpyDeviceToHost));
 
-CHECK(cudaMemset(d_C, 0, nBytes));
 setRowReadCol<<<grid, block>>>(d_C);
-CHECK(cudaMemcpy(gpuRef, d_C, nBytes, cudaMemcpyDeviceToHost));
 
-CHECK(cudaMemset(d_C, 0, nBytes));
 setRowReadColDyn<<<grid, block, BDIMX*BDIMY*sizeof(int)>>>(d_C);
-CHECK(cudaMemcpy(gpuRef, d_C, nBytes, cudaMemcpyDeviceToHost));
 
-CHECK(cudaMemset(d_C, 0, nBytes));
 setRowReadColPad<<<grid, block>>>(d_C);
-CHECK(cudaMemcpy(gpuRef, d_C, nBytes, cudaMemcpyDeviceToHost));
 
-CHECK(cudaMemset(d_C, 0, nBytes));
 setRowReadColDynPad<<<grid, block, (BDIMX + IPAD)*BDIMY*sizeof(int)>>>(d_C);
-CHECK(cudaMemcpy(gpuRef, d_C, nBytes, cudaMemcpyDeviceToHost));
-
 ```
 ## Implement sum reduction by unrolling8
 ```
-
-// Kernel function declaration
-__global__ void reduceUnrolling8(int *g_idata, int *g_odata, unsigned int n);
-
-// Function to calculate elapsed time in milliseconds
-double getElapsedTime(struct timeval start, struct timeval end)
+reduceUnrolling8
+Kernel Function
+__global__ void reduceUnrolling8(int *g_idata, int *g_odata, unsigned int n)
 {
-    long seconds = end.tv_sec - start.tv_sec;
-    long microseconds = end.tv_usec - start.tv_usec;
-    double elapsed = seconds + microseconds / 1e6;
-    return elapsed * 1000; // Convert to milliseconds
+    // Set thread ID
+    unsigned int tid = threadIdx.x;
+    unsigned int idx = blockIdx.x * blockDim.x * 8 + threadIdx.x;
+
+    // Convert global data pointer to the local pointer of this block
+    int *idata = g_idata + blockIdx.x * blockDim.x * 8;
+
+    // Unrolling 8
+    if (idx + 7 * blockDim.x < n)
+    {
+        int a1 = g_idata[idx];
+        int a2 = g_idata[idx + blockDim.x];
+        int a3 = g_idata[idx + 2 * blockDim.x];
+        int a4 = g_idata[idx + 3 * blockDim.x];
+
+        int b1 = g_idata[idx + 4 * blockDim.x];
+        int b2 = g_idata[idx + 5 * blockDim.x];
+        int b3 = g_idata[idx + 6 * blockDim.x];
+        int b4 = g_idata[idx + 7 * blockDim.x];
+
+        g_idata[idx] = a1 + a2 + a3 + a4 + b1 + b2 + b3 + b4;
+    }
+
+    __syncthreads();
+
+    // In-place reduction in global memory
+    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1)
+    {
+        if (tid < stride)
+        {
+            idata[tid] += idata[tid + stride];
+        }
+
+        // Synchronize within thread block
+        __syncthreads();
+    }
+
+    // Write result for this block to global memory
+    if (tid == 0)
+    {
+        g_odata[blockIdx.x] = idata[0];
+    }
 }
-
-// Device memory allocation
-int *d_idata, *d_odata;
-cudaMalloc((void **)&d_idata, size);
-cudaMalloc((void **)&d_odata, size);
-
-// Copy input data from host to device
-cudaMemcpy(d_idata, h_idata, size, cudaMemcpyHostToDevice);
-
-// Launch the reduction kernel
+Kernel Call
 reduceUnrolling8<<<gridSize, blockSize>>>(d_idata, d_odata, n);
 
-// Copy the result from device to host
-cudaMemcpy(h_odata, d_odata, size, cudaMemcpyDeviceToHost);
-
-// Free Device Memory
-cudaFree(d_idata);
-cudaFree(d_odata);
 
 ```
 ## Implement sum reduction by unrolling16
 ```
-// Kernel function declaration
-__global__ void reduceUnrolling16(int *g_idata, int *g_odata, unsigned int n);
+reduceUnrolling16
+Kernel Function
+__global__ void reduceUnrolling16(int *g_idata, int *g_odata, unsigned int n) {
+    // Set thread ID
+    unsigned int tid = threadIdx.x;
+    unsigned int idx = blockIdx.x * blockDim.x * 16 + threadIdx.x;
 
-// Device memory allocation
-int *d_idata, *d_odata;
-cudaMalloc((void **)&d_idata, size);
-cudaMalloc((void **)&d_odata, size);
+    // Convert global data pointer to the local pointer of this block
+    int *idata = g_idata + blockIdx.x * blockDim.x * 16;
 
-// Copy input data from host to device
-cudaMemcpy(d_idata, h_idata, size, cudaMemcpyHostToDevice);
-
-// Define grid and block dimensions
-dim3 blockSize(256); // 256 threads per block
-dim3 gridSize((n + blockSize.x * 16 - 1) / (blockSize.x * 16));
-
-// Compute the final sum on the GPU
-int sum_gpu = 0;
-for (unsigned int i = 0; i < gridSize.x; i++)
-{
-    sum_gpu += h_odata[i];
-}
-
-// Stop GPU timer
-gettimeofday(&end_gpu, NULL);
-double elapsedTime_gpu = getElapsedTime(start_gpu, end_gpu);
-
-// Set thread ID
-unsigned int tid = threadIdx.x;
-unsigned int idx = blockIdx.x * blockDim.x * 16 + threadIdx.x;
-
-// Convert global data pointer to the local pointer of this block
-int *idata = g_idata + blockIdx.x * blockDim.x * 16;
-
-// Unrolling 16
-if (idx + 15 * blockDim.x < n)
-{
+    // Unrolling 16
+    if (idx + 15 * blockDim.x < n) {
         int a1 = g_idata[idx];
         int a2 = g_idata[idx + blockDim.x];
         int a3 = g_idata[idx + 2 * blockDim.x];
@@ -182,73 +279,49 @@ if (idx + 15 * blockDim.x < n)
         int b7 = g_idata[idx + 14 * blockDim.x];
         int b8 = g_idata[idx + 15 * blockDim.x];
         g_idata[idx] = a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + b1 + b2 + b3 + b4 + b5 + b6 + b7 + b8;
+    }
+
+    __syncthreads();
+
+    // In-place reduction in global memory
+    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+        if (tid < stride) {
+            idata[tid] += idata[tid + stride];
+        }
+
+        // Synchronize within thread block
+        __syncthreads();
+    }
+
+    // Write result for this block to global memory
+    if (tid == 0) {
+        g_odata[blockIdx.x] = idata[0];
+    }
 }
+Kernel Call
+reduceUnrolling16<<<gridSize, blockSize>>>(d_idata, d_odata, n);
 
 ```
 ## Write a CUDA C program for Matrix summation with a 2D grid and 2D blocks. Adapt it to integer matrix addition.
 ```
-// grid 2D block 2D
-__global__ void sumMatrixOnGPU2D(int *A, int *B, int *C, int NX, int NY)
-{
+sumMatrixOnGPU2D
+Kernel Function
+__global__ void sumMatrixOnGPU2D(int *A, int *B, int *C, int NX, int NY) {
     unsigned int ix = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int iy = blockIdx.y * blockDim.y + threadIdx.y;
     unsigned int idx = iy * NX + ix;
 
-    if (ix < NX && iy < NY)
-    {
+    if (ix < NX && iy < NY) {
         C[idx] = A[idx] + B[idx];
     }
 }
-
-// set up device
-int dev = 0;
-cudaDeviceProp deviceProp;
-CHECK(cudaGetDeviceProperties(&deviceProp, dev));
-printf("Using Device %d: %s\n", dev, deviceProp.name);
-CHECK(cudaSetDevice(dev));
-
-// set up data size of matrix
-int nx = 1 << 14;
-int ny = 1 << 14;
-
-int nxy = nx * ny;
-int nBytes = nxy * sizeof(float);
-printf("Matrix size: nx %d ny %d\n", nx, ny);
-
-// malloc device global memory
-int *d_MatA, *d_MatB, *d_MatC;
-CHECK(cudaMalloc((void **)&d_MatA, nBytes));
-CHECK(cudaMalloc((void **)&d_MatB, nBytes));
-CHECK(cudaMalloc((void **)&d_MatC, nBytes));
-
-// transfer data from host to device
-CHECK(cudaMemcpy(d_MatA, h_A, nBytes, cudaMemcpyHostToDevice));
-CHECK(cudaMemcpy(d_MatB, h_B, nBytes, cudaMemcpyHostToDevice));
-
-// invoke kernel at host side
-int dimx = 32;
-int dimy = 32;
-dim3 block(dimx, dimy);
-dim3 grid((nx + block.x - 1) / block.x, (ny + block.y - 1) / block.y);
-
-// check kernel error
-CHECK(cudaGetLastError());
-
-// copy kernel result back to host side
-CHECK(cudaMemcpy(gpuRef, d_MatC, nBytes, cudaMemcpyDeviceToHost));
-
-// check device results
-checkResult(hostRef, gpuRef, nxy);
-
-// free device global memory
-CHECK(cudaFree(d_MatA));
-CHECK(cudaFree(d_MatB));
-CHECK(cudaFree(d_MatC));
-
+Kernel Call
+sumMatrixOnGPU2D<<<grid, block>>>(d_MatA, d_MatB, d_MatC, nx, ny);
 ```
 ## Write a CUDA C program to perform matrix addition with Unified memory.
 ```
-// grid 2D block 2D
+sumMatrixGPU
+Kernel Function
 __global__ void sumMatrixGPU(float *MatA, float *MatB, float *MatC, int nx,
                              int ny)
 {
@@ -261,55 +334,21 @@ __global__ void sumMatrixGPU(float *MatA, float *MatB, float *MatC, int nx,
         MatC[idx] = MatA[idx] + MatB[idx];
     }
 }
-
-// set up data size of matrix
-int nx, ny;
-int ishift = 12;
-
-if  (argc > 1) ishift = atoi(argv[1]);
-
-nx = ny = 1 << ishift;
-
-int nxy = nx * ny;
-int nBytes = nxy * sizeof(float);
-
-// invoke kernel at host side
-int dimx = 32;
-int dimy = 32;
-dim3 block(dimx, dimy);
-dim3 grid((nx + block.x - 1) / block.x, (ny + block.y - 1) / block.y);
-
-// warm-up kernel, with unified memory all pages will migrate from host to device
+Kernel Call
+// warm-up kernel, with unified memory all pages will migrate from host to
+// device
 sumMatrixGPU<<<grid, block>>>(A, B, gpuRef, 1, 1);
 
-// Kernel Call
+// after warm-up, time with unified memory
+iStart = seconds();
 sumMatrixGPU<<<grid, block>>>(A, B, gpuRef, nx, ny);
 
-// check kernel error
-CHECK(cudaGetLastError());
-
-// check device results
-checkResult(hostRef, gpuRef, nxy);
-
-// free device global memory
-CHECK(cudaFree(A));    
-CHECK(cudaFree(B));
-CHECK(cudaFree(hostRef));
-CHECK(cudaFree(gpuRef));
-
-// reset device
-CHECK(cudaDeviceReset());
-return (0);
-
 
 ```
-## Write a CUDA C program to perform matrix addition with Unified memory.
+## Write a CUDA C program to perform matrix amultiplication.
 ```
-// Define your program elements
-#define SIZE 4
-#define BLOCK_SIZE 2
-
-// Kernel function to perform matrix multiplication
+matrixMultiply
+Kernel Function
 __global__ void matrixMultiply(int *a, int *b, int *c, int size)
 {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
@@ -322,33 +361,6 @@ __global__ void matrixMultiply(int *a, int *b, int *c, int size)
     }
     c[row * size + col] = sum;
 }
-
-// Allocate memory on the device
-cudaMalloc((void**)&dev_a, size);
-cudaMalloc((void**)&dev_b, size);
-cudaMalloc((void**)&dev_c, size);
-
-// Copy input matrices from host to device memory
-cudaMemcpy(dev_a, a, size, cudaMemcpyHostToDevice);
-cudaMemcpy(dev_b, b, size, cudaMemcpyHostToDevice);
-
-// Set grid and block sizes
-dim3 dimGrid(SIZE / BLOCK_SIZE, SIZE / BLOCK_SIZE);
-dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE);
-
-// Launch kernel
+Kernel Call
 matrixMultiply<<<dimGrid, dimBlock>>>(dev_a, dev_b, dev_c, SIZE);
-
-// Copy result matrix from device to host memory
-cudaMemcpy(c, dev_c, size, cudaMemcpyDeviceToHost);
-
-// Print the elapsed time
-printf("Elapsed Time: %.6f seconds\n", elapsed_time);
-
-// Free device memory
-cudaFree(dev_a);
-cudaFree(dev_b);
-cudaFree(dev_c);
 ```
-
-
